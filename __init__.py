@@ -15,7 +15,8 @@ from nonebot.rule import Rule
 
 from .getDB import (CheckDB, GetAward, GetCharInfo, GetDaily, GetMysInfo,
                     GetSignInfo, GetSignList, GetWeaponInfo, MysSign, OpenPush,
-                    connectDB, cookiesDB, deletecache, selectDB, get_alots)
+                    connectDB, cookiesDB, deletecache, selectDB, get_alots,
+                    GetEnemiesInfo)
 from .getImg import draw_abyss0_pic, draw_abyss_pic, draw_event_pic, draw_pic, draw_wordcloud
 
 config = nonebot.get_driver().config
@@ -31,6 +32,8 @@ get_weapon = on_startswith("武器", priority=priority)
 get_char = on_startswith("角色", priority=priority)
 get_cost = on_startswith("材料", priority=priority)
 get_polar = on_startswith("命座", priority=priority)
+get_talents = on_startswith("天赋", priority=priority)
+get_enemies = on_startswith("原魔", priority=priority)
 
 get_uid_info = on_startswith("uid", permission=GROUP, priority=priority)
 get_mys_info = on_startswith("mys", permission=GROUP, priority=priority)
@@ -159,9 +162,53 @@ async def _(bot: Bot, event: Event):
     message = str(event.get_message()).strip()
     message = message.replace('武器', "")
     message = message.replace(' ', "")
-    im = await weapon_wiki(message)
+    name = ''.join(re.findall('[\u4e00-\u9fa5]', message))
+    level = re.findall(r"[0-9]+", message)
+    if len(level) == 1:
+        im = await weapon_wiki(name,level=level[0])
+    else:
+        im = await weapon_wiki(name)
     await get_weapon.send(im)
 
+@get_enemies.handle()
+async def _(bot: Bot, event: Event):
+    message = str(event.get_message()).strip()
+    message = message.replace('原魔', "").replace(' ', "")
+    im = await enemies_wiki(message)
+    await get_enemies.send(im)
+
+@get_talents.handle()
+async def _(bot: Bot, event: Event):
+    message = str(event.get_message()).strip()
+    message = message.replace('天赋', "")
+    message = message.replace(' ', "")
+    name = ''.join(re.findall('[\u4e00-\u9fa5]', message))
+    num = re.findall(r"[0-9]+", message)
+    if len(num) == 1:
+        im = await char_wiki(name,"talents",num[0])
+    else:
+        im = "参数不正确。"
+    await get_talents.send(im)
+
+async def enemies_wiki(name):
+    raw_data = await GetEnemiesInfo(name)
+    reward = ""
+    for i in raw_data["rewardpreview"]:
+        reward += i["name"] + "：" + str(i["count"]) if "count" in i.keys() else i["name"] + "：" + "可能"
+        reward += "\n"
+    im = "【{}】\n——{}——\n类型：{}\n信息：{}\n掉落物：\n{}".format(raw_data["name"],raw_data["specialname"],
+                                                    raw_data["category"],raw_data["description"],reward)
+    return im
+
+async def enemies_wiki(name):
+    raw_data = await GetEnemiesInfo(name)
+    reward = ""
+    for i in raw_data["rewardpreview"]:
+        reward += i["name"] + "：" + str(i["count"]) if "count" in i.keys() else i["name"] + "：" + "可能"
+        reward += "\n"
+    im = "【{}】\n——{}——\n类型：{}\n信息：{}\n掉落物：\n{}".format(raw_data["name"],raw_data["specialname"],
+                                                    raw_data["category"],raw_data["description"],reward)
+    return im
 
 @get_char.handle()
 async def _(bot: Bot, event: Event):
@@ -171,17 +218,17 @@ async def _(bot: Bot, event: Event):
     name = ''.join(re.findall('[\u4e00-\u9fa5]', message))
     level = re.findall(r"[0-9]+", message)
     if len(level) == 1:
-        im = await char_wiki(name,extra="stats",num=level[0])
+        im = await char_wiki(name,"char",level=level[0])
     else:
         im = await char_wiki(name)
-    await get_weapon.send(im)
+    await get_char.send(im)
 
 @get_cost.handle()
 async def _(bot: Bot, event: Event):
     message = str(event.get_message()).strip()
     message = message.replace('材料', "")
     message = message.replace(' ', "")
-    im = await char_wiki(message,extra="cost")
+    im = await char_wiki(message,"costs")
     await get_weapon.send(im)
 
 @get_polar.handle()
@@ -193,7 +240,7 @@ async def _(bot: Bot, event: Event):
     m = ''.join(re.findall('[\u4e00-\u9fa5]', message))
     if num <= 0 or num > 6:
         await get_weapon.finish("你家{}有{}命？".format(m, num))
-    im = await char_wiki(m, 2, num)
+    im = await char_wiki(m, "constellations", num)
     await get_weapon.send(im)
 
 @draw_event.scheduled_job('cron', hour='2')
@@ -288,11 +335,21 @@ async def _(bot: Bot, event: Event):
     message = str(event.get_message()).strip().replace(
         ' ', "").replace('开启', "")
     m = ''.join(re.findall('[\u4e00-\u9fa5]', message))
+
+    qid = event.sender.user_id
+    at = re.search(r"\[CQ:at,qq=(\d*)\]", message)
+
     if m == "自动签到":
         try:
+            if at and qid in superusers:
+                qid = at.group(1)
+            elif at and at.group(1) != qid:
+                await close_switch.send("你没有权限。", at_sender=True)
+                return
+            else:
+                pass
             gid = event.get_session_id().split("_")[1] if len(
                 event.get_session_id().split("_")) == 3 else "on"
-            qid = event.sender.user_id
             uid = await selectDB(qid, mode="uid")
             im = await OpenPush(int(uid[0]), qid, str(gid), "StatusB")
             await open_switch.send(im, at_sender=True)
@@ -300,9 +357,15 @@ async def _(bot: Bot, event: Event):
             await open_switch.send("未绑定uid信息！", at_sender=True)
     elif m == "推送":
         try:
+            if at and qid in superusers:
+                qid = at.group(1)
+            elif at and at.group(1) != qid:
+                await close_switch.send("你没有权限。", at_sender=True)
+                return
+            else:
+                pass
             gid = event.get_session_id().split("_")[1] if len(
                 event.get_session_id().split("_")) == 3 else "on"
-            qid = event.sender.user_id
             uid = await selectDB(qid, mode="uid")
             im = await OpenPush(int(uid[0]), qid, str(gid), "StatusA")
             await open_switch.send(im, at_sender=True)
@@ -317,9 +380,19 @@ async def _(bot: Bot, event: Event):
     message = str(event.get_message()).strip().replace(
         ' ', "").replace('关闭', "")
     m = ''.join(re.findall('[\u4e00-\u9fa5]', message))
+
+    qid = event.sender.user_id
+    at = re.search(r"\[CQ:at,qq=(\d*)\]", message)
+
     if m == "自动签到":
         try:
-            qid = event.sender.user_id
+            if at and qid in superusers:
+                qid = at.group(1)
+            elif at and at.group(1) != qid:
+                await close_switch.send("你没有权限。", at_sender=True)
+                return
+            else:
+                pass
             uid = await selectDB(qid, mode="uid")
             im = await OpenPush(int(uid[0]), qid, "off", "StatusB")
             await close_switch.send(im, at_sender=True)
@@ -327,7 +400,13 @@ async def _(bot: Bot, event: Event):
             await close_switch.send("未绑定uid信息！", at_sender=True)
     elif m == "推送":
         try:
-            qid = event.sender.user_id
+            if at and qid in superusers:
+                qid = at.group(1)
+            elif at and at.group(1) != qid:
+                await close_switch.send("你没有权限。", at_sender=True)
+                return
+            else:
+                pass
             uid = await selectDB(qid, mode="uid")
             im = await OpenPush(int(uid[0]), qid, "off", "StatusA")
             await close_switch.send(im, at_sender=True)
@@ -615,160 +694,207 @@ async def daily(mode="push", uid=None):
 
     for row in c_data:
         raw_data = await GetDaily(str(row[0]))
-        dailydata = raw_data["data"]
-        current_resin = dailydata['current_resin']
-
-        if current_resin >= row[6]:
-            tip = ''
-
-            if row[1] != 0:
-                tip = "\n==============\n你的树脂快满了！"
-            max_resin = dailydata['max_resin']
-            rec_time = ''
-            # print(dailydata)
-            if current_resin < 160:
-                resin_recovery_time = seconds2hours(
-                    dailydata['resin_recovery_time'])
-                next_resin_rec_time = seconds2hours(
-                    8 * 60 - ((dailydata['max_resin'] - dailydata['current_resin']) * 8 * 60 - int(dailydata['resin_recovery_time'])))
-                rec_time = f' ({next_resin_rec_time}/{resin_recovery_time})'
-
-            finished_task_num = dailydata['finished_task_num']
-            total_task_num = dailydata['total_task_num']
-            is_extra_got = '已' if dailydata['is_extra_task_reward_received'] else '未'
-
-            resin_discount_num_limit = dailydata['resin_discount_num_limit']
-            used_resin_discount_num = resin_discount_num_limit - \
-                dailydata['remain_resin_discount_num']
-
-            current_expedition_num = dailydata['current_expedition_num']
-            max_expedition_num = dailydata['max_expedition_num']
-            finished_expedition_num = 0
-            expedition_info: list[str] = []
-            for expedition in dailydata['expeditions']:
-                avatar: str = expedition['avatar_side_icon'][89:-4]
-                try:
-                    avatar_name: str = avatar_json[avatar]
-                except KeyError:
-                    avatar_name: str = avatar
-
-                if expedition['status'] == 'Finished':
-                    expedition_info.append(f"{avatar_name} 探索完成")
-                    finished_expedition_num += 1
-                else:
-                    remained_timed: str = seconds2hours(
-                        expedition['remained_time'])
-                    expedition_info.append(
-                        f"{avatar_name} 剩余时间{remained_timed}")
-            expedition_data = "\n".join(expedition_info)
-
-            send_mes = daily_im.format(tip, current_resin, max_resin, rec_time, finished_task_num, total_task_num, is_extra_got, used_resin_discount_num,
-                                       resin_discount_num_limit, current_expedition_num, finished_expedition_num, max_expedition_num, expedition_data)
-
+        if raw_data["retcode"] != 0:
             temp_list.append(
-                {"qid": row[2], "gid": row[3], "message": send_mes})
+                {"qid": row[2], "gid": row[3], "message": "你的推送状态有误；可能是uid绑定错误或没有在米游社打开“实时便筏”功能。"})
+        else:
+            dailydata = raw_data["data"]
+            current_resin = dailydata['current_resin']
+
+            if current_resin >= row[6]:
+                tip = ''
+
+                if row[1] != 0:
+                    tip = "\n==============\n你的树脂快满了！"
+                max_resin = dailydata['max_resin']
+                rec_time = ''
+                # print(dailydata)
+                if current_resin < 160:
+                    resin_recovery_time = seconds2hours(
+                        dailydata['resin_recovery_time'])
+                    next_resin_rec_time = seconds2hours(
+                        8 * 60 - ((dailydata['max_resin'] - dailydata['current_resin']) * 8 * 60 - int(dailydata['resin_recovery_time'])))
+                    rec_time = f' ({next_resin_rec_time}/{resin_recovery_time})'
+
+                finished_task_num = dailydata['finished_task_num']
+                total_task_num = dailydata['total_task_num']
+                is_extra_got = '已' if dailydata['is_extra_task_reward_received'] else '未'
+
+                resin_discount_num_limit = dailydata['resin_discount_num_limit']
+                used_resin_discount_num = resin_discount_num_limit - \
+                    dailydata['remain_resin_discount_num']
+
+                current_expedition_num = dailydata['current_expedition_num']
+                max_expedition_num = dailydata['max_expedition_num']
+                finished_expedition_num = 0
+                expedition_info: list[str] = []
+                for expedition in dailydata['expeditions']:
+                    avatar: str = expedition['avatar_side_icon'][89:-4]
+                    try:
+                        avatar_name: str = avatar_json[avatar]
+                    except KeyError:
+                        avatar_name: str = avatar
+
+                    if expedition['status'] == 'Finished':
+                        expedition_info.append(f"{avatar_name} 探索完成")
+                        finished_expedition_num += 1
+                    else:
+                        remained_timed: str = seconds2hours(
+                            expedition['remained_time'])
+                        expedition_info.append(
+                            f"{avatar_name} 剩余时间{remained_timed}")
+                expedition_data = "\n".join(expedition_info)
+
+                send_mes = daily_im.format(tip, current_resin, max_resin, rec_time, finished_task_num, total_task_num, is_extra_got, used_resin_discount_num,
+                                        resin_discount_num_limit, current_expedition_num, finished_expedition_num, max_expedition_num, expedition_data)
+
+                temp_list.append(
+                    {"qid": row[2], "gid": row[3], "message": send_mes})
     return temp_list
 
 
-async def weapon_wiki(name):
+async def weapon_wiki(name,level = None):
     data = await GetWeaponInfo(name)
-    name = data['name']
-    type = data['weapontype']
-    star = data['rarity'] + "星"
-    info = data['description']
-    atk = str(data['baseatk'])
-    sub_name = data['substat']
-    if data['subvalue'] != "":
-        sub_val = (data['subvalue'] +
-                '%') if sub_name != '元素精通' else data['subvalue']
-        sub = "\n" + "【" + sub_name + "】" + sub_val
+    if level:
+        data2 = await GetWeaponInfo(name,level+"plus" if level else level)
+        if data["substat"] != "":
+            sp = data["substat"] + "：" + '%.1f%%' % (data2["specialized"] * 100) if data["substat"] != "元素精通" else data["substat"] + "：" + str(math.floor(data2["specialized"]))
+        else:
+            sp = ""
+        im = (data["name"] + "\n等级：" + str(data2["level"]) + "（突破" + str(data2["ascension"]) + "）" + 
+                    "\n攻击力：" + str(math.floor(data2["attack"])) + "\n" + sp)
     else:
-        sub = ""
+        name = data['name']
+        type = data['weapontype']
+        star = data['rarity'] + "星"
+        info = data['description']
+        atk = str(data['baseatk'])
+        sub_name = data['substat']
+        if data['subvalue'] != "":
+            sub_val = (data['subvalue'] +
+                    '%') if sub_name != '元素精通' else data['subvalue']
+            sub = "\n" + "【" + sub_name + "】" + sub_val
+        else:
+            sub = ""
 
-    if data['effectname'] != "":
-        raw_effect = data['effect']
-        rw_ef = []
-        for i in range(len(data['r1'])):
-            now = ''
-            for j in range(1, 6):
-                now = now + data['r{}'.format(j)][i] + "/"
-            now = now[:-1]
-            rw_ef.append(now)
-        raw_effect = raw_effect.format(*rw_ef)
-        effect = "\n" + "【" + data['effectname'] + "】" + "：" + raw_effect
-    else:
-        effect = ""
-    im = weapon_im.format(name, type, star, info, atk,
-                          sub, effect)
+        if data['effectname'] != "":
+            raw_effect = data['effect']
+            rw_ef = []
+            for i in range(len(data['r1'])):
+                now = ''
+                for j in range(1, 6):
+                    now = now + data['r{}'.format(j)][i] + "/"
+                now = now[:-1]
+                rw_ef.append(now)
+            raw_effect = raw_effect.format(*rw_ef)
+            effect = "\n" + "【" + data['effectname'] + "】" + "：" + raw_effect
+        else:
+            effect = ""
+        im = weapon_im.format(name, type, star, info, atk,
+                            sub, effect)
     return im
 
 
-async def char_wiki(name, mode=0, num="", extra=""):
-    data = await GetCharInfo(name, mode)
-    if mode == 0:
+async def char_wiki(name, mode="char", level=None):
+    data = await GetCharInfo(name, mode, level if mode == "char" else None)
+    if mode == "char":
         if isinstance(data,str):
             raw_data = data.replace("[","").replace("\n","").replace("]","").replace(" ","").replace("'","").split(',')
             if data.replace("\n","").replace(" ","") == "undefined":
                 im = "不存在该角色或类型。"
             else:
                 im = ','.join(raw_data)
+        elif level:
+            data2 = await GetCharInfo(name, mode)
+            sp = data2["substat"] + "：" + '%.1f%%' % (data["specialized"] * 100) if data2["substat"] != "元素精通" else data2["substat"] + "：" + str(math.floor(data["specialized"]))
+            im = (data2["name"] + "\n等级：" + str(data["level"]) + "\n血量：" + str(math.floor(data["hp"])) +
+                "\n攻击力：" + str(math.floor(data["attack"])) + "\n防御力：" + str(math.floor(data["defense"])) +
+                "\n" + sp)
         else:
-            if extra == "cost":
-                talent_data = await GetCharInfo(name, 1)
+            name = data['title'] + ' — ' + data['name']
+            star = data['rarity']
+            type = data["weapontype"]
+            element = data['element']
+            up_val = data['substat']
+            bdday = data['birthday']
+            polar = data['constellation']
+            cv = data['cv']['chinese']
+            info = data['description']
+            im = char_info_im.format(
+                name, star, type, element, up_val, bdday, polar, cv, info)
+    elif mode == "costs":
+        im = "【天赋材料(一份)】\n{}\n【突破材料】\n{}"
+        im1 = ""
+        im2 = ""
+        
+        talent_temp = {}
+        talent_cost = data[1]["costs"]
+        for i in talent_cost.values():
+            for j in i:
+                if j["name"] not in talent_temp:
+                    talent_temp[j["name"]] = j["count"]
+                else:
+                    talent_temp[j["name"]] = talent_temp[j["name"]] + j["count"]
+        for k in talent_temp:
+            im1 = im1 + k + ":" + str(talent_temp[k]) + "\n"
 
-                im = "【天赋材料(一份)】\n{}\n【突破材料】\n{}"
-                im1 = ""
-                im2 = ""
-                
-                talent_temp = {}
-                talent_cost = talent_data["costs"]
-                for i in talent_cost.values():
-                    for j in i:
-                        if j["name"] not in talent_temp:
-                            talent_temp[j["name"]] = j["count"]
-                        else:
-                            talent_temp[j["name"]] = talent_temp[j["name"]] + j["count"]
-                for k in talent_temp:
-                    im1 = im1 + k + ":" + str(talent_temp[k]) + "\n"
+        temp = {}
+        cost = data[0]
+        for i in range(1,7):
+            for j in cost["ascend{}".format(i)]:
+                if j["name"] not in temp:
+                    temp[j["name"]] = j["count"]
+                else:
+                    temp[j["name"]] = temp[j["name"]] + j["count"]
+                    
+        for k in temp:
+            im2 = im2 + k + ":" + str(temp[k]) + "\n"
+        
+        im = im.format(im1,im2)
+    elif mode == "constellations":
+        im = "【" + data["c{}".format(level)]['name'] + "】" + "：" + \
+            "\n" + data["c{}".format(level)]['effect'].replace("*", "")
+    elif mode == "talents":
+        if int(level) <= 3 :
+            if level == "1":
+                data = data["combat1"]
+            elif level == "2":
+                data = data["combat2"]
+            elif level == "3":
+                data = data["combat3"]
+            skill_name = data["name"]
+            skill_info = data["info"]
+            skill_detail = ""
 
-                temp = {}
-                cost = data["costs"]
-                for i in range(1,7):
-                    for j in cost["ascend{}".format(i)]:
-                        if j["name"] not in temp:
-                            temp[j["name"]] = j["count"]
-                        else:
-                            temp[j["name"]] = temp[j["name"]] + j["count"]
-                            
-                for k in temp:
-                    im2 = im2 + k + ":" + str(temp[k]) + "\n"
-                
-                im = im.format(im1,im2)
+            for i in data["attributes"]["parameters"]:
+                temp = ""
+                for k in data["attributes"]["parameters"][i]:
+                    temp += "%.2f%%" % (k * 100) + "/"
+                data["attributes"]["parameters"][i] = temp[:-1]
 
-            elif extra == "stats":
-                data2 = await GetCharInfo(name, mode, num)
-                im = (name + "\n等级：" + str(data2["level"]) + "\n血量：" + str(math.floor(data2["hp"])) +
-                    "\n攻击力：" + str(math.floor(data2["attack"])) + "\n防御力：" + str(math.floor(data2["defense"])) +
-                    "\n" + data["substat"] + "：" + '%.1f%%' % (data2["specialized"] * 100))
-            else:
-                name = data['title'] + ' — ' + data['name']
-                star = data['rarity']
-                type = data["weapontype"]
-                element = data['element']
-                up_val = data['substat']
-                bdday = data['birthday']
-                polar = data['constellation']
-                cv = data['cv']['chinese']
-                info = data['description']
-                im = char_info_im.format(
-                    name, star, type, element, up_val, bdday, polar, cv, info)
-    elif mode == 1:
-        im = '暂不支持'
-    elif mode == 2:
-        im = "【" + data["c{}".format(num)]['name'] + "】" + "：" + \
-            "\n" + data["c{}".format(num)]['effect'].replace("*", "")
+            for i in data["attributes"]["labels"]:
+                #i = i.replace("{","{{")
+                i = re.sub(r':[a-zA-Z0-9]+}', "}", i)
+                #i.replace(r':[a-zA-Z0-9]+}','}')
+                skill_detail += i + "\n"
+
+            skill_detail = skill_detail.format(**data["attributes"]["parameters"])
+
+            im = "【{}】\n{}\n————\n{}".format(skill_name,skill_info,skill_detail)
+
+        else:
+            if level == "4":
+                data = data["passive1"]
+            elif level == "5":
+                data = data["passive2"]
+            elif level == "6":
+                data = data["passive3"]
+            elif level == "7":
+                data = data["passive4"]
+            skill_name = data["name"]
+            skill_info = data["info"]
+            im = "【{}】\n{}".format(skill_name,skill_info)
     return im
-
 
 async def rule_all_recheck(Bot, Event, T_State):
     return Event.sender.user_id in superusers
