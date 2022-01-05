@@ -5,6 +5,7 @@ import sqlite3
 import threading
 import time,math
 import base64
+import traceback
 
 import nonebot
 from nonebot import *
@@ -442,7 +443,8 @@ async def _(bot: Bot, event: Event):
                              month_stone, month_mora, lastmonth_stone, lastmonth_mora, group_str)
         await month_data.send(im, at_sender=True)
     except Exception as e:
-        nonebot.logger.warning(e.with_traceback)
+        nonebot.logger.error("发生错误 {}，请检查日志。".format(e))
+        print(traceback.format_exc())
         await month_data.send('未找到绑定信息', at_sender=True)
 
 # 群聊内 签到 功能
@@ -458,7 +460,8 @@ async def _(bot: Bot, event: Event):
     except TypeError:
         im = "没有找到绑定信息。"
     except Exception as e:
-        nonebot.logger.warning(e.with_traceback)
+        nonebot.logger.error("发生错误 {}，请检查日志。".format(e))
+        print(traceback.format_exc())
         im = "发生错误。"
     finally:
         await get_sign.send(im, at_sender=True)
@@ -482,7 +485,8 @@ async def _(bot: Bot, event: Event):
         mes = await daily("ask", uid)
         im = mes[0]['message']
     except Exception as e:
-        nonebot.logger.warning(e.with_traceback)
+        nonebot.logger.error("发生错误 {}，请检查日志。".format(e))
+        print(traceback.format_exc())
         im = "没有找到绑定信息。"
 
     await daily_data.send(im, at_sender=True)
@@ -525,7 +529,7 @@ async def _(bot: Bot, event: Event):
             await get_uid_info.send(im, at_sender=True)
         except Exception as e:
             nonebot.logger.error("发生错误 {}，请检查日志。".format(e))
-            nonebot.logger.warning(e.with_traceback)
+            print(traceback.format_exc())
             await get_uid_info.send('输入错误！')
 
 # 群聊内 绑定uid 的命令，会绑定至当前qq号上
@@ -603,7 +607,9 @@ async def _(bot: Bot, event: Event):
             try:
                 bg = await draw_pic(uid[0], nickname, image, uid[1])
                 await search.send(bg, at_sender=True)
-            except:
+            except Exception as e:
+                nonebot.logger.error("发生错误 {}，请检查日志。".format(e))
+                print(traceback.format_exc())
                 await search.send('输入错误！')
         else:
             pass
