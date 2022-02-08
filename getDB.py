@@ -14,6 +14,35 @@ BASE_PATH = os.path.dirname(__file__)
 BASE2_PATH = os.path.join(BASE_PATH,'mys')
 INDEX_PATH = os.path.join(BASE2_PATH,'index')
 
+async def config_check(func,mode = "CHECK"):
+    conn = sqlite3.connect('ID_DATA.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS Config
+            (Name TEXT PRIMARY KEY     NOT NULL,
+            Status      TEXT,
+            GroupList   TEXT,
+            Extra       TEXT);''')
+    c.execute("INSERT OR IGNORE INTO Config (Name,Status) \
+                            VALUES (?, ?)",(func,"on"))
+    if mode == "CHECK":
+        cursor = c.execute("SELECT * from Config WHERE Name = ?",(func,))
+        c_data = cursor.fetchall()
+        conn.close()
+        if c_data[0][1] != "off":
+            return True
+        else:
+            return False
+    elif mode == "OPEN":
+        c.execute("UPDATE Config SET Status = ? WHERE Name=?",("on",func))
+        conn.commit()
+        conn.close()
+        return True
+    elif mode == "CLOSED":
+        c.execute("UPDATE Config SET Status = ? WHERE Name=?",("off",func))
+        conn.commit()
+        conn.close()
+        return True
+        
 async def get_alots(qid):
     conn = sqlite3.connect('ID_DATA.db')
     c = conn.cursor()
@@ -66,9 +95,10 @@ async def OpenPush(uid,qid,status,mode):
 
 async def CheckDB():
     str = ''
+    invalidlist = []
     conn = sqlite3.connect('ID_DATA.db')
     c = conn.cursor()
-    cursor = c.execute("SELECT UID,Cookies  from NewCookiesTable")
+    cursor = c.execute("SELECT UID,Cookies,QID  from NewCookiesTable")
     c_data = cursor.fetchall()
     for row in c_data:
         try:
@@ -83,15 +113,15 @@ async def CheckDB():
             str = str + f"uid{row[0]}/mysid{mysid}的Cookies是正常的！\n"
         except:
             str = str + f"uid{row[0]}的Cookies是异常的！已删除该条Cookies！\n"
+            invalidlist.append([row[2],row[0]])
             c.execute("DELETE from NewCookiesTable where UID=?",(row[0],))
-            test = c.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name = 'CookiesCache'")
-            if test == 0:
-                pass
-            else:
+            try:
                 c.execute("DELETE from CookiesCache where Cookies=?",(row[1],))
+            except:
+                pass
     conn.commit()
     conn.close()
-    return str
+    return [str,invalidlist]
 
 async def connectDB(userid,uid = None,mys = None):
     conn = sqlite3.connect('ID_DATA.db')
@@ -132,19 +162,25 @@ async def selectDB(userid,mode = "auto"):
         elif mode == "mys":
             return [row[2],3]
             
-def deletecache():
+async def deletecache():
+    try:
+        copyfile("ID_DATA.db", "ID_DATA_bak.db")
+        print("————数据库成功备份————")
+    except:
+        print("————数据库备份失败————")
+    
     try:
         conn = sqlite3.connect('ID_DATA.db')
         c = conn.cursor()
         c.execute("DROP TABLE CookiesCache")
         c.execute("UPDATE NewCookiesTable SET Extra = ? WHERE Extra=?",(None,"limit30"))
-        copyfile("ID_DATA.db", "ID_DATA_bak.db")
         c.execute('''CREATE TABLE IF NOT EXISTS CookiesCache
         (UID TEXT PRIMARY KEY,
         MYSID         TEXT,
         Cookies       TEXT);''')
         conn.commit()
         conn.close()
+        print("————UID查询缓存已清空————")
     except:
         print("\nerror\n")
     
@@ -154,6 +190,7 @@ def deletecache():
         c.execute("UPDATE UseridDict SET lots=NULL")
         conn.commit()
         conn.close()
+        print("————御神签缓存已清空————")
     except:
         print("\nerror\n")
 
